@@ -17,7 +17,7 @@ export const generateStory = async (req: Request, res: Response) => {
 
     const storyText = generateStoryText();
     const ttsUrl = await generateTTS(storyText);
-    const story = new Story({ text: storyText, ttsUrl });
+    const story = new Story({ text: storyText, ttsUrl, userId: req.user?.id });
     await story.save();
     res.json({ id: story._id, story: storyText, ttsUrl });
     logger.info("Story generated", { id: story._id });
