@@ -1,3 +1,7 @@
+import fs from "fs";
+import path from "path";
+import OpenAI from "openai";
+import dotenv from "dotenv";
 import {
   PollyClient,
   SynthesizeSpeechCommand,
@@ -7,6 +11,12 @@ import {
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { Upload } from "@aws-sdk/lib-storage";
 import { v4 as uuidv4 } from "uuid";
+
+dotenv.config();
+
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
 
 // Initialize AWS clients
 const region = "us-east-2"; // Replace with your S3 bucket's region
@@ -19,7 +29,7 @@ const s3 = new S3Client({
 
 const BUCKET_NAME = "bedtime-stories-tts-bucket";
 
-export const generateTTS = async (text: string): Promise<string> => {
+const generatePollyTTS = async (text: string): Promise<string> => {
   const pollyParams = {
     OutputFormat: OutputFormat.MP3,
     Text: text,
@@ -48,5 +58,51 @@ export const generateTTS = async (text: string): Promise<string> => {
   } catch (error) {
     console.error("Error in generateTTS:", error);
     throw new Error("Failed to generate TTS");
+  }
+};
+
+const generateOpenAITTS = async (text: string): Promise<string> => {
+  const filePath = path.resolve("./speech.mp3");
+  try {
+    const mp3 = await openai.audio.speech.create({
+      model: "tts-1",
+      voice: "onyx",
+      input: text,
+    });
+
+    const buffer = Buffer.from(await mp3.arrayBuffer());
+    await fs.promises.writeFile(filePath, buffer);
+
+    const key = `${uuidv4()}.mp3`;
+    const fileStream = fs.createReadStream(filePath);
+
+    const upload = new Upload({
+      client: s3,
+      params: {
+        Bucket: BUCKET_NAME,
+        Key: key,
+        Body: fileStream,
+        ContentType: "audio/mpeg",
+      },
+    });
+
+    await upload.done();
+    fs.unlinkSync(filePath); // Remove the local file after uploading
+
+    return `https://${BUCKET_NAME}.s3.${region}.amazonaws.com/${key}`;
+  } catch (error) {
+    console.error("Error in generateOpenAITTS:", error);
+    throw new Error("Failed to generate TTS with OpenAI");
+  }
+};
+
+export const generateTTS = async (
+  text: string,
+  useOpenAI: boolean = false
+): Promise<string> => {
+  if (useOpenAI) {
+    return await generateOpenAITTS(text);
+  } else {
+    return await generatePollyTTS(text);
   }
 };
