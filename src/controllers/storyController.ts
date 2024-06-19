@@ -1,7 +1,6 @@
 import { Request, Response } from "express";
-import { v4 as uuidv4 } from "uuid";
 import OpenAI from "openai";
-import { generateTTS } from "../services/ttsService";
+import { generateTTS, OpenAIAllowedVoices } from "../services/ttsService";
 import Story from "../models/storyModel";
 import db from "../database/connection";
 import logger from "../utils/logger";
@@ -14,16 +13,26 @@ const openai = new OpenAI({
 });
 
 // Function to generate story text using OpenAI's Node.js client library
-const generateStoryText = async (): Promise<string> => {
+const generateStoryText = async (
+  language: string,
+  languageCode: string,
+  text: string
+): Promise<string> => {
   try {
+    const prompt = text || "Once upon a time..."; // Default prompt if not provided
+
     const response = await openai.chat.completions.create({
       model: "gpt-4o",
       messages: [
-        { role: "system", content: "You are a storyteller." },
-        { role: "user", content: "Once upon a time..." },
+        {
+          role: "system",
+          content: `You are a storyteller. Please write a story in ${language}. After generating before sending it to me check the generated story to be sure it doesn't include any errors in ${language}, if yes, then fix it.`,
+        },
+        { role: "user", content: prompt },
       ],
-      max_tokens: 1000,
+      max_tokens: 500,
       temperature: 0.7,
+      user: languageCode, // Add the language code as part of the user context to enforce language usage
     });
 
     return response.choices[0].message.content?.trim() || "";
@@ -34,13 +43,16 @@ const generateStoryText = async (): Promise<string> => {
 };
 
 export const generateStory = async (req: Request, res: Response) => {
+  const { language, languageCode, voice, text } = req.body;
+  const voiceChoice: OpenAIAllowedVoices = voice || "alloy"; // Default to 'alloy' if no voice is specified
+
   try {
     if (db.readyState !== 1) {
       await new Promise((resolve) => db.once("open", resolve));
     }
 
-    const storyText = await generateStoryText();
-    const ttsUrl = await generateTTS(storyText, true); // Set to true to use OpenAI for TTS
+    const storyText = await generateStoryText(language, languageCode, text);
+    const ttsUrl = await generateTTS(storyText, voiceChoice); // Use OpenAI for TTS
     const story = new Story({ text: storyText, ttsUrl, userId: req.user?.id });
     await story.save();
     res.json({ id: story._id, story: storyText, ttsUrl });
